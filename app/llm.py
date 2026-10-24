@@ -132,14 +132,17 @@ Q: What is the weather forecast for next week?
 
 
 # ---------------------------------------------------------------------------
-# Internal: call Gemini
+# Internal: low-level model caller (shared by both public functions)
 # ---------------------------------------------------------------------------
 
-def _call_gemini(user_prompt: str) -> str:
+def _call_model(system_prompt: str, user_prompt: str) -> str:
     """
-    Send user_prompt to Gemini under _SYSTEM_PROMPT.
-    Returns the raw text of the model's reply.
+    Send one user turn to Gemini under the given system_prompt.
+    Returns the raw response text.
     Raises LLMError on missing API key or any API-level failure.
+
+    All Gemini calls go through this function so swapping providers
+    means editing exactly one place.
     """
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
@@ -150,13 +153,13 @@ def _call_gemini(user_prompt: str) -> str:
 
     model_name: str = os.environ.get("LLM_MODEL", "gemini-1.5-flash")
 
-    # Re-configure each call so tests can monkey-patch os.environ safely.
+    # Re-configure on every call so tests can monkey-patch os.environ safely.
     genai.configure(api_key=api_key)
 
     model = genai.GenerativeModel(
         model_name=model_name,
-        system_instruction=_SYSTEM_PROMPT,
-        # temperature=0 makes the output deterministic — critical for SQL generation.
+        system_instruction=system_prompt,
+        # temperature=0 → deterministic output, critical for SQL generation.
         generation_config=genai.GenerationConfig(temperature=0),
     )
 
@@ -164,10 +167,28 @@ def _call_gemini(user_prompt: str) -> str:
         response = model.generate_content(user_prompt)
         return response.text
     except Exception as exc:
-        # Catch the full google-generativeai exception hierarchy without
-        # importing every subclass.  We re-raise as LLMError so callers
-        # only need to handle one exception type.
+        # Re-raise as LLMError so callers only handle one exception type.
         raise LLMError(f"Gemini API call failed: {exc}") from exc
+
+
+def _call_gemini(user_prompt: str) -> str:
+    """Call the model with the SQL-generation system prompt."""
+    return _call_model(_SYSTEM_PROMPT, user_prompt)
+
+
+# ---------------------------------------------------------------------------
+# Answer-generation prompt (separate from SQL prompt — simpler, no schema)
+# ---------------------------------------------------------------------------
+
+_ANSWER_SYSTEM_PROMPT = """
+You are a data analyst presenting results to a business user.
+You will receive a small data table and a question.
+Write exactly ONE complete sentence that answers the question.
+Rules:
+- Use ONLY the numbers from the table. Do not invent, round, or estimate values.
+- Do not add caveats, multiple sentences, or bullet points.
+- Prefer natural phrasing (e.g. "Monitor generated the highest revenue at ₹473,000").
+""".strip()
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +256,44 @@ def _parse_response(raw: str) -> dict:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+def generate_answer(
+    question: str,
+    columns: list[str],
+    rows: list[tuple],
+) -> str:
+    """
+    Ask the LLM to summarise the query result in exactly one sentence.
+
+    The full result table is passed verbatim so the model can only
+    reference numbers that actually came from the database.
+
+    Parameters
+    ----------
+    question : the original user question
+    columns  : column names from the query result
+    rows     : result rows (capped at 20 for prompt length)
+
+    Returns
+    -------
+    A single sentence string (caller must still run number verification).
+
+    Raises
+    ------
+    LLMError : on API failure
+    """
+    # Build a plain-text table (max 20 rows to keep the prompt short)
+    header = " | ".join(columns)
+    data_lines = [" | ".join(str(v) for v in row) for row in rows[:20]]
+    table = header + "\n" + "\n".join(data_lines)
+
+    user_prompt = (
+        f"Data table:\n{table}\n\n"
+        f"Question: {question}\n\n"
+        "Answer in one sentence:"
+    )
+    return _call_model(_ANSWER_SYSTEM_PROMPT, user_prompt)
+
 
 def generate_sql(question: str, error: str | None = None) -> dict:
     """
