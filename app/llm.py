@@ -18,7 +18,8 @@ import json
 import os
 import re
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 
 # Load .env on first import so the caller doesn't have to remember to do it.
@@ -138,11 +139,14 @@ Q: What is the weather forecast for next week?
 def _call_model(system_prompt: str, user_prompt: str) -> str:
     """
     Send one user turn to Gemini under the given system_prompt.
+    Uses the newer google-genai SDK (Client-based, not module-level configure).
     Returns the raw response text.
-    Raises LLMError on missing API key or any API-level failure.
 
-    All Gemini calls go through this function so swapping providers
-    means editing exactly one place.
+    All Gemini calls go through this function — swap providers by editing here only.
+
+    Raises
+    ------
+    LLMError : missing API key or any API/network failure.
     """
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
@@ -151,20 +155,22 @@ def _call_model(system_prompt: str, user_prompt: str) -> str:
             "Copy .env.example to .env and add your key."
         )
 
-    model_name: str = os.environ.get("LLM_MODEL", "gemini-1.5-flash")
+    # Read model name at call time so tests can override via os.environ.
+    model_name: str = os.environ.get("LLM_MODEL", "gemini-2.0-flash")
 
-    # Re-configure on every call so tests can monkey-patch os.environ safely.
-    genai.configure(api_key=api_key)
-
-    model = genai.GenerativeModel(
-        model_name=model_name,
-        system_instruction=system_prompt,
-        # temperature=0 → deterministic output, critical for SQL generation.
-        generation_config=genai.GenerationConfig(temperature=0),
-    )
+    # New SDK: instantiate a Client per call (stateless, safe for monkeypatching).
+    client = genai.Client(api_key=api_key)
 
     try:
-        response = model.generate_content(user_prompt)
+        response = client.models.generate_content(
+            model=model_name,
+            contents=user_prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                # temperature=0 → deterministic output, critical for SQL generation.
+                temperature=0,
+            ),
+        )
         return response.text
     except Exception as exc:
         # Re-raise as LLMError so callers only handle one exception type.
