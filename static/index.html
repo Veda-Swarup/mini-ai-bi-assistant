@@ -1,1 +1,427 @@
-<!-- static/index.html — plain HTML + vanilla JS UI. No framework. Written in Step 8. -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mini BI Assistant</title>
+  <style>
+    /* ── Reset & base ─────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #f1f5f9;
+      color: #1e293b;
+      min-height: 100vh;
+    }
+
+    /* ── Header ──────────────────────────────────────────────────────── */
+    header {
+      background: #1e40af;
+      color: #fff;
+      padding: 1.25rem 2rem;
+    }
+    header h1 { font-size: 1.4rem; font-weight: 700; }
+    header p  { font-size: 0.85rem; opacity: 0.8; margin-top: 0.2rem; }
+
+    /* ── Layout ──────────────────────────────────────────────────────── */
+    main {
+      max-width: 860px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.5rem;
+    }
+
+    /* ── Card ────────────────────────────────────────────────────────── */
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+      padding: 1.5rem;
+    }
+
+    /* ── Question input area ─────────────────────────────────────────── */
+    .input-row {
+      display: flex;
+      gap: .75rem;
+      align-items: flex-start;
+    }
+    textarea {
+      flex: 1;
+      resize: vertical;
+      min-height: 70px;
+      padding: .6rem .8rem;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-size: 1rem;
+      font-family: inherit;
+      color: inherit;
+      line-height: 1.5;
+      transition: border-color .2s;
+    }
+    textarea:focus { outline: none; border-color: #2563eb; }
+    textarea:disabled { background: #f8fafc; cursor: not-allowed; }
+
+    button#ask-btn {
+      padding: .65rem 1.4rem;
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background .2s;
+    }
+    button#ask-btn:hover:not(:disabled) { background: #1d4ed8; }
+    button#ask-btn:disabled { background: #93c5fd; cursor: not-allowed; }
+
+    /* ── Example chips ───────────────────────────────────────────────── */
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .5rem;
+      margin-top: 1rem;
+    }
+    .chip {
+      padding: .35rem .8rem;
+      background: #eff6ff;
+      color: #1d4ed8;
+      border: 1px solid #bfdbfe;
+      border-radius: 999px;
+      font-size: .82rem;
+      cursor: pointer;
+      transition: background .15s, color .15s;
+    }
+    .chip:hover { background: #dbeafe; }
+
+    /* ── Spinner ─────────────────────────────────────────────────────── */
+    #spinner {
+      display: none;
+      align-items: center;
+      gap: .6rem;
+      color: #64748b;
+      font-size: .9rem;
+      margin-top: .75rem;
+    }
+    #spinner.visible { display: flex; }
+    .dot-pulse {
+      display: inline-flex;
+      gap: 3px;
+    }
+    .dot-pulse span {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: #2563eb;
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+    .dot-pulse span:nth-child(2) { animation-delay: .2s; }
+    .dot-pulse span:nth-child(3) { animation-delay: .4s; }
+    @keyframes pulse {
+      0%, 80%, 100% { opacity: .2; transform: scale(.8); }
+      40%            { opacity: 1;  transform: scale(1);  }
+    }
+
+    /* ── Result card variants ────────────────────────────────────────── */
+    #result { display: none; }
+    #result.visible { display: block; }
+
+    .status-badge {
+      display: inline-block;
+      padding: .2rem .6rem;
+      border-radius: 999px;
+      font-size: .75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      margin-bottom: .8rem;
+    }
+    .badge-ok      { background: #dcfce7; color: #166534; }
+    .badge-no_data { background: #fef9c3; color: #854d0e; }
+    .badge-unsupported { background: #ffedd5; color: #9a3412; }
+    .badge-error   { background: #fee2e2; color: #991b1b; }
+
+    /* ── Answer text ─────────────────────────────────────────────────── */
+    #answer-text {
+      font-size: 1.1rem;
+      line-height: 1.6;
+      font-weight: 500;
+      margin-bottom: 1.2rem;
+    }
+
+    /* ── Collapsible SQL ─────────────────────────────────────────────── */
+    details {
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      margin-bottom: 1.2rem;
+    }
+    summary {
+      padding: .55rem .9rem;
+      cursor: pointer;
+      font-size: .85rem;
+      font-weight: 600;
+      color: #475569;
+      user-select: none;
+      list-style: none;
+    }
+    summary::before { content: "▶  "; font-size: .7rem; }
+    details[open] summary::before { content: "▼  "; }
+    pre {
+      margin: 0;
+      padding: .9rem 1rem;
+      background: #f8fafc;
+      border-top: 1px solid #e2e8f0;
+      border-radius: 0 0 6px 6px;
+      overflow-x: auto;
+      font-size: .82rem;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* ── Data table ──────────────────────────────────────────────────── */
+    .table-wrap {
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .875rem;
+    }
+    thead th {
+      background: #f1f5f9;
+      text-align: left;
+      padding: .55rem .8rem;
+      font-weight: 700;
+      color: #475569;
+      border-bottom: 2px solid #e2e8f0;
+      white-space: nowrap;
+    }
+    tbody td {
+      padding: .5rem .8rem;
+      border-bottom: 1px solid #f1f5f9;
+      color: #334155;
+    }
+    tbody tr:hover td { background: #f8fafc; }
+    tbody tr:last-child td { border-bottom: none; }
+    .row-count {
+      margin-top: .6rem;
+      font-size: .78rem;
+      color: #94a3b8;
+      text-align: right;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>🤖 Mini BI Assistant</h1>
+  <p>Ask a natural-language question about sales data (Jan – Jun 2026)</p>
+</header>
+
+<main>
+
+  <!-- ── Question card ─────────────────────────────────────────────── -->
+  <div class="card">
+    <div class="input-row">
+      <textarea
+        id="question"
+        maxlength="300"
+        placeholder="e.g. Which product generated the highest revenue?"
+        aria-label="Your question"
+      ></textarea>
+      <button id="ask-btn" onclick="ask()">Ask</button>
+    </div>
+
+    <!-- Spinner -->
+    <div id="spinner">
+      <div class="dot-pulse">
+        <span></span><span></span><span></span>
+      </div>
+      Generating SQL and querying database…
+    </div>
+
+    <!-- Example chips -->
+    <div class="chips" role="list" aria-label="Example questions">
+      <button class="chip" onclick="setQ(this)">What is the total revenue?</button>
+      <button class="chip" onclick="setQ(this)">Which product generated the highest revenue?</button>
+      <button class="chip" onclick="setQ(this)">What is the monthly revenue trend?</button>
+      <button class="chip" onclick="setQ(this)">Which region generated the highest sales?</button>
+      <button class="chip" onclick="setQ(this)">How did revenue change between February 2026 and March 2026?</button>
+    </div>
+  </div>
+
+  <!-- ── Result card ────────────────────────────────────────────────── -->
+  <div class="card" id="result" aria-live="polite">
+    <span id="status-badge" class="status-badge"></span>
+    <p  id="answer-text"></p>
+
+    <!-- Collapsible SQL — only shown when SQL is available -->
+    <details id="sql-details">
+      <summary>SQL used</summary>
+      <pre id="sql-code"></pre>
+    </details>
+
+    <!-- Data table — only shown when rows exist -->
+    <div id="table-container"></div>
+  </div>
+
+</main>
+
+<script>
+  "use strict";
+
+  // ── DOM refs ─────────────────────────────────────────────────────────────
+  const qEl       = document.getElementById("question");
+  const askBtn    = document.getElementById("ask-btn");
+  const spinner   = document.getElementById("spinner");
+  const resultEl  = document.getElementById("result");
+  const badgeEl   = document.getElementById("status-badge");
+  const answerEl  = document.getElementById("answer-text");
+  const sqlDetail = document.getElementById("sql-details");
+  const sqlCodeEl = document.getElementById("sql-code");
+  const tableCont = document.getElementById("table-container");
+
+  // ── XSS guard — escape before any innerHTML assignment ───────────────────
+  // We prefer textContent where possible; esc() is used inside table HTML.
+  function esc(str) {
+    return String(str ?? "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#x27;");
+  }
+
+  // ── Chip click: fill textarea and submit ──────────────────────────────────
+  function setQ(chip) {
+    qEl.value = chip.textContent.trim();
+    ask();
+  }
+
+  // ── Loading state helpers ─────────────────────────────────────────────────
+  function setLoading(on) {
+    askBtn.disabled = on;
+    qEl.disabled    = on;
+    spinner.classList.toggle("visible", on);
+  }
+
+  // ── Main ask() ────────────────────────────────────────────────────────────
+  async function ask() {
+    const q = qEl.value.trim();
+    if (!q) { qEl.focus(); return; }
+
+    setLoading(true);
+    clearResult();
+
+    let data;
+    try {
+      const res  = await fetch("/api/ask", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ question: q }),
+      });
+      data = await res.json();
+
+      // For 4xx/5xx the server returns structured JSON we can still render.
+      // Only treat network-level failures as hard errors.
+    } catch (networkErr) {
+      showNetworkError(networkErr);
+      setLoading(false);
+      return;
+    }
+
+    renderResult(data);
+    setLoading(false);
+    resultEl.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  // ── Clear previous result ────────────────────────────────────────────────
+  function clearResult() {
+    resultEl.classList.remove("visible");
+    tableCont.innerHTML = "";
+    sqlDetail.open      = false;
+  }
+
+  // ── Render API response ───────────────────────────────────────────────────
+  function renderResult(data) {
+    const status = data.status || "error";
+
+    // Badge
+    const badgeLabels = {
+      ok:          "✓ Answer",
+      no_data:     "⚠ No data",
+      unsupported: "✗ Not supported",
+      error:       "✗ Error",
+    };
+    badgeEl.textContent = badgeLabels[status] ?? status;
+    badgeEl.className   = "status-badge badge-" + esc(status);
+
+    // Answer — always set via textContent (never innerHTML) → no XSS risk
+    answerEl.textContent = data.answer ?? "No answer returned.";
+
+    // SQL block — only shown when the server returned SQL
+    if (data.sql) {
+      sqlCodeEl.textContent = data.sql;   // textContent: safe for <pre>
+      sqlDetail.style.display = "";
+    } else {
+      sqlDetail.style.display = "none";
+    }
+
+    // Data table
+    if (data.columns && data.columns.length > 0 && data.rows && data.rows.length > 0) {
+      tableCont.appendChild(buildTable(data.columns, data.rows));
+      const count = document.createElement("p");
+      count.className   = "row-count";
+      count.textContent = data.rows.length + " row" + (data.rows.length !== 1 ? "s" : "");
+      tableCont.appendChild(count);
+    }
+
+    resultEl.classList.add("visible");
+  }
+
+  // ── Build <table> from columns + rows (all text escaped) ─────────────────
+  function buildTable(columns, rows) {
+    const wrap = document.createElement("div");
+    wrap.className = "table-wrap";
+
+    // Build HTML string — every cell value is escaped before insertion
+    let html = "<table><thead><tr>";
+    for (const col of columns) {
+      html += "<th>" + esc(col) + "</th>";
+    }
+    html += "</tr></thead><tbody>";
+    for (const row of rows) {
+      html += "<tr>";
+      for (const cell of row) {
+        html += "<td>" + esc(cell) + "</td>";
+      }
+      html += "</tr>";
+    }
+    html += "</tbody></table>";
+
+    wrap.innerHTML = html;   // safe: every value went through esc()
+    return wrap;
+  }
+
+  // ── Network-level error (fetch itself threw) ──────────────────────────────
+  function showNetworkError(err) {
+    renderResult({
+      status: "error",
+      answer: "Could not reach the server. Is uvicorn running? (" + err.message + ")",
+      sql:    null,
+      columns: [],
+      rows:   [],
+    });
+  }
+
+  // ── Submit on Ctrl+Enter / Cmd+Enter ─────────────────────────────────────
+  qEl.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") ask();
+  });
+</script>
+
+</body>
+</html>
