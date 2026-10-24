@@ -201,7 +201,7 @@ async def index() -> FileResponse:
         500: {"description": "Unexpected server error"},
     },
 )
-async def ask_endpoint(body: AskRequest) -> JSONResponse:
+def ask_endpoint(body: AskRequest) -> JSONResponse:
     """
     Pipeline
     ────────
@@ -211,6 +211,9 @@ async def ask_endpoint(body: AskRequest) -> JSONResponse:
     4. Execute on read-only SQLite connection
     5. LLM produces one-sentence answer; numbers verified against rows
     6. Return answer + SQL + supporting rows
+
+    Note: Defined as synchronous `def` (not `async def`) so FastAPI automatically
+    runs it in a worker threadpool, preventing blocking of the asyncio event loop.
     """
     t_start = time.perf_counter()
     question = body.question.strip()

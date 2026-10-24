@@ -156,7 +156,7 @@ def _call_model(system_prompt: str, user_prompt: str) -> str:
         )
 
     # Read model name at call time so tests can override via os.environ.
-    model_name: str = os.environ.get("LLM_MODEL", "gemini-3.8-flash")
+    model_name: str = os.environ.get("LLM_MODEL", "gemini-3-flash-preview")
 
     # New SDK: instantiate a Client per call (stateless, safe for monkeypatching).
     client = genai.Client(api_key=api_key)

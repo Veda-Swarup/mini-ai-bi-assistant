@@ -79,7 +79,7 @@ cp .env.example .env
 Edit `.env` and configure your API key:
 ```env
 GEMINI_API_KEY=AIzaSy...your-gemini-key...
-LLM_MODEL=gemini-3.8-flash
+LLM_MODEL=gemini-3-flash-preview
 DB_PATH=db/sales.db
 CSV_PATH=data/rgs.csv
 ```
