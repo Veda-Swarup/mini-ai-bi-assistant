@@ -212,13 +212,22 @@ def _build_answer(
 # Helper: build a consistent error-status response dict
 # ---------------------------------------------------------------------------
 
-def _error_response(message: str) -> dict:
+def _error_response(message: str, error_type: str = "server") -> dict:
+    """
+    Build a status='error' response dict.
+
+    error_type
+    ----------
+    'llm'    → main.py maps this to HTTP 502 Bad Gateway (upstream AI failure)
+    'server' → main.py maps this to HTTP 500 Internal Server Error
+    """
     return {
-        "answer": f"An error occurred: {message}",
-        "sql":     None,
-        "columns": [],
-        "rows":    [],
-        "status":  "error",
+        "answer":    f"An error occurred: {message}",
+        "sql":       None,
+        "columns":   [],
+        "rows":      [],
+        "status":    "error",
+        "error_type": error_type,   # consumed by main.py; not surfaced in API docs
     }
 
 
@@ -256,7 +265,7 @@ def ask(question: str) -> dict:
     try:
         llm_result = generate_sql(question)
     except LLMError as exc:
-        return _error_response(str(exc))
+        return _error_response(str(exc), error_type="llm")
 
     # ── 3. Unsupported question ───────────────────────────────────────────────
     if not llm_result["supported"]:
@@ -280,7 +289,9 @@ def ask(question: str) -> dict:
             "status":  "unsupported",
         }
     except (UnsafeSQL, sqlite3.Error, LLMError) as exc:
-        return _error_response(str(exc))
+        # Differentiate LLM errors (502) from guard/DB errors (500)
+        error_type = "llm" if isinstance(exc, LLMError) else "server"
+        return _error_response(str(exc), error_type=error_type)
 
     # ── 5. No rows returned ───────────────────────────────────────────────────
     if not rows:
