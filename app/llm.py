@@ -169,6 +169,9 @@ def _call_model(system_prompt: str, user_prompt: str) -> str:
                 system_instruction=system_prompt,
                 # temperature=0 → deterministic output, critical for SQL generation.
                 temperature=0,
+                # thinking_budget=0 eliminates hidden reasoning latency,
+                # delivering immediate responses without sacrificing prompt adherence.
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
         )
         return response.text
