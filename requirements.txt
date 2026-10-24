@@ -4,7 +4,7 @@
 fastapi==0.115.5
 uvicorn[standard]==0.32.1
 sqlglot==25.26.0
-openai==1.54.4
+google-generativeai==0.8.3
 python-dotenv==1.0.1
 pandas==2.2.3
 pytest==8.3.3
