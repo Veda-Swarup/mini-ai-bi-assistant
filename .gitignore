@@ -1,0 +1,26 @@
+# === Secrets ===
+.env
+
+# === Python cache ===
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+
+# === Virtual environment ===
+.venv/
+venv/
+env/
+
+# === Database (generated at runtime) ===
+db/sales.db
+
+# === macOS ===
+.DS_Store
+
+# === IDE ===
+.vscode/
+.idea/
