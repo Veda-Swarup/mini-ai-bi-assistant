@@ -38,10 +38,10 @@ flowchart TD
 ```
 
 ### Architecture Explanation
-1. **Frontend**: Lightweight, vanilla HTML/JS interface with zero framework dependencies and no build step. All rendering utilizes context-aware HTML escaping to prevent XSS vulnerabilities.
-2. **API Layer (`app/main.py`)**: FastAPI application handling HTTP routing, strict Pydantic input validation, status code mapping (`200`, `400`, `422`, `502`, `500`), and structured logging (latency, question, SQL verdict) without exposing API keys or secrets.
-3. **Service Layer (`app/service.py`)**: The central pipeline coordinator. Enforces length checks, handles model output parsing, orchestrates SQL execution with a single self-repair retry loop on failure, and validates that generated answer numbers exist in actual database records.
-4. **LLM Provider (`app/llm.py`)**: Isolated provider wrapper utilizing Google's official `google-genai` SDK (`gemini-3.8-flash` with `thinking_budget=0` for near-instant responses). Translates natural language into SQLite dialect and outputs strictly typed JSON.
+1. **Frontend**: Lightweight, vanilla HTML/JS interface with zero external framework dependencies and no build step. All rendering utilizes context-aware HTML escaping to prevent XSS vulnerabilities.
+2. **API Layer (`app/main.py`)**: FastAPI application handling HTTP routing, strict Pydantic input validation, status code mapping (`200`, `400`, `422`, `502`, `500`), and structured logging (latency, question, SQL verdict) without exposing API keys or secrets. Uses synchronous thread-pool execution (`def ask_endpoint`) to ensure network I/O never blocks Uvicorn's event loop.
+3. **Service Layer (`app/service.py`)**: The central pipeline coordinator. Enforces length checks (1–300 chars), handles model output parsing, orchestrates SQL execution with a single self-repair retry loop on failure, and validates that generated answer numbers exist in actual database records.
+4. **LLM Provider (`app/llm.py`)**: Isolated provider wrapper utilizing Google's official `google-genai` SDK (`gemini-3-flash-preview` with `thinking_budget=0` for sub-2 second responses). Translates natural language into SQLite dialect and outputs strictly typed JSON.
 5. **Guardrail Layer (`app/guard.py`)**: AST-based SQL parser using `sqlglot`. Verifies single-statement execution, enforces a strict `SELECT`-only and `v_revenue` table allowlist, and automatically injects `LIMIT 200` to prevent runaway scans.
 6. **Data Storage & Execution (`app/db.py`, `app/etl.py`)**: Embedded SQLite database accessed via read-only URI mode (`?mode=ro`). The LLM interacts strictly with the `v_revenue` view, completely isolating raw data and internal tables.
 
@@ -57,8 +57,8 @@ flowchart TD
 
 #### 1. Clone & Enter Repository
 ```bash
-git clone <your-repo-url>
-cd AI_assistant
+git clone https://github.com/Veda-Swarup/mini-ai-bi-assistant.git
+cd mini-ai-bi-assistant
 ```
 
 #### 2. Create and Activate Virtual Environment
@@ -219,20 +219,52 @@ All five challenge example questions are fully supported:
 
 ### AI Tools Used
 - **Claude / Gemini / Antigravity Assistant**: Used during development for progressive pair-programming, schema validation, AST guard design, and test suite generation.
-- **Google GenAI SDK (`google-genai`)**: Production runtime SDK connecting to `gemini-3.8-flash`.
+- **Google GenAI SDK (`google-genai==2.33.0`)**: Production runtime SDK connecting to `gemini-3-flash-preview`.
 
 ### Key Problems Encountered & How They Were Debugged
 1. **Model Deprecation (404 Error)**:
-   - *Problem*: Initial setup targeted `gemini-1.5-flash`, which Google's `v1beta` endpoint reported as discontinued.
-   - *Fix*: Upgraded to the modern `google-genai` SDK and configured `gemini-3.8-flash`.
+   - *Problem*: Initial setup targeted legacy `gemini-1.5-flash`, which Google's `v1beta` endpoint reported as discontinued.
+   - *Fix*: Upgraded to the modern `google-genai` SDK and targeted the active Gemini 3 family.
 2. **Thinking Latency Spike**:
    - *Problem*: Newer Gemini 3.x models default to generating internal reasoning tokens, adding 8–10 seconds of invisible latency per query.
-   - *Fix*: Set `thinking_config=types.ThinkingConfig(thinking_budget=0)` in `app/llm.py`, cutting round-trip response time down to 1–2 seconds.
-3. **sqlglot AST Node Types**:
-   - *Problem*: `UNION ALL` statements initially produced unexpected error messages during security tests.
-   - *Fix*: Debugged using AST node inspection: `sqlglot` classifies `UNION` queries as `exp.Union` rather than `exp.Select`. This confirmed that malicious UNION injection attacks are cleanly blocked at the statement-type validation check before reaching the allowlist.
+   - *Fix*: Set `thinking_config=types.ThinkingConfig(thinking_budget=0)` in `app/llm.py`, cutting round-trip model response time down to 1–2 seconds.
+3. **Rate Limits & Exponential Backoff (429 RESOURCE_EXHAUSTED)**:
+   - *Problem*: `gemini-3.8-flash` on the free tier is restricted to 20 Requests Per Day (RPD). Exceeding this caused the SDK to trigger client-side exponential backoff, locking requests for 30–70 seconds.
+   - *Fix*: Migrated the default model to `gemini-3-flash-preview`, which provides open developer tier quotas with sub-2s execution.
+4. **FastAPI Event Loop Concurrency Lock**:
+   - *Problem*: `ask_endpoint` in `app/main.py` was defined as `async def`, but executed synchronous blocking network calls (`gemini.models.generate_content`) and SQLite queries. In Python's `asyncio`, blocking calls inside a coroutine freeze the entire event loop, causing concurrent requests (and even `/health`) to hang indefinitely.
+   - *Fix*: Changed `ask_endpoint` from `async def` to synchronous `def`. FastAPI automatically delegates synchronous endpoints to a dedicated AnyIO worker thread pool, keeping the main async event loop completely non-blocking and responsive.
+5. **sqlglot AST Node Types**:
+   - *Problem*: `UNION ALL` statements produced an AST node type error during security tests.
+   - *Fix*: Debugged using AST node inspection: `sqlglot` classifies `UNION` queries as `exp.Union` rather than `exp.Select`. Malicious UNION injection attempts are cleanly blocked at the statement-type validation check before reaching the table allowlist.
 
 ### What Could Be Improved With Another Day of Work
 - **Conversational Memory**: Add a session ID mechanism storing the last generated SQL and parameters to allow contextual drill-downs.
 - **Dynamic Visual Charts**: Render interactive SVG bar and line charts in the frontend using Chart.js or vanilla SVG rather than tabular data alone.
 - **Semantic Column Synonym Mapping**: Implement a vectorless fuzzy semantic dictionary for product nicknames (e.g. mapping "display" $\rightarrow$ "Monitor").
+
+---
+
+## Architectural & Interview Concepts Reference
+
+### 1. Agentic AI vs. Generative AI
+* **Generative AI**: Focuses on content generation given an input prompt (e.g., text, images, code) without autonomous control loops or environment interaction. The model generates output in a single forward pass and terminates.
+* **Agentic AI**: Characterized by **autonomy, goal-directed behavior, environment observation, and closed-loop execution**. An agent uses tools, observes tool execution results, reflects, and self-corrects:
+  * In this application, our single-retry mechanism in `app/service.py` is an **agentic pattern**: when an AST validation or SQLite execution error occurs, the pipeline feeds the exact SQLite error back to the LLM to autonomously correct its SQL syntax and retry before returning a verdict to the user.
+
+### 2. RAG vs. Text-to-SQL vs. Vectorless RAG
+* **Standard RAG (Retrieval-Augmented Generation)**:
+  * Ingests unstructured documents (PDFs, docs), chunks text, computes vector embeddings, and performs nearest-neighbor vector similarity search (e.g. via Pinecone, ChromaDB).
+  * *Limitation for tabular analytics*: Vector similarity cannot compute aggregations (`SUM`, `AVG`, `COUNT`), cannot group by attributes, and frequently hallucinates numbers when combining values across rows.
+* **Text-to-SQL**:
+  * Directly translates natural language into structured queries (`SELECT SUM(net_revenue) ...`) executed by a relational database engine.
+  * All mathematical aggregations are executed deterministically with 100% precision by the SQL engine, guaranteeing mathematical accuracy.
+* **Vectorless RAG**:
+  * Rather than embedding row data into a vector database, the application performs retrieval via **deterministic relational queries** dynamically generated by the LLM. The "retrieved chunks" are the exact rows returned by the SQLite engine, which are then passed into the answer-generation and verification pipeline.
+
+### 3. Frameworks vs. Lightweight Vanilla Python (Why no LangChain / LlamaIndex?)
+In production enterprise architectures, heavy wrapper frameworks like LangChain or LlamaIndex often introduce:
+1. **Unnecessary Abstraction & Overhead**: Debugging prompt leakage, hidden token overhead, or brittle internal chains is notoriously difficult.
+2. **Security Vulnerabilities**: External agent frameworks often permit arbitrary tool execution or loose SQL query generation without strict AST-level allowlisting.
+3. **Dependency Bloat**: High dependency weight leads to larger Docker images and higher security vulnerability surface area.
+4. **Deterministic Control**: Writing a vanilla, 5-layer pipeline in idiomatic Python with `FastAPI`, `sqlglot`, and the official `google-genai` SDK guarantees complete control over AST parsing, read-only guarantees, anti-hallucination verification, and error boundaries.
